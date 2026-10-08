@@ -1,6 +1,6 @@
-import React from 'react';
+import React, {useState} from 'react';
 export const groupLabels = {tags: 'Tags', correspondent: 'Korrespondenten', year: 'Jahr', document_type: 'Dokumenttyp'};
-export const defaults = {start: 1, end: 100, groups: ['tags', 'correspondent'], sort: 'title', title: 'Archivverzeichnis', selected_tags: null, tag_mode: 'multiple', tag_priority: [], year_desc: false, location_field: null, location_rules: [], correspondent_register: true, show_gaps: false, pdf_toc: true, new_group_page: false};
+export const defaults = {start: 1, end: 100, groups: ['tags', 'correspondent'], sort: 'title', title: 'Archivverzeichnis', selected_tags: null, include_unmatched: false, tag_mode: 'multiple', tag_priority: [], year_desc: false, location_field: null, location_rules: [], correspondent_register: true, show_gaps: false, pdf_toc: true, new_group_page: false};
 export function loadForm() {
   try {return {...defaults, ...JSON.parse(localStorage.getItem('asn-index-options') || '{}')};}
   catch {return {...defaults};}
@@ -27,7 +27,9 @@ export function GroupOptions({form, change}) {
   </>;
 }
 export function IndexOptions({form, change, metadata, connected, busy, ready, send}) {
+  const [tagSearch, setTagSearch] = useState('');
   const tags = [...(metadata?.tags || [])].sort((a,b)=>a.name.localeCompare(b.name,'de'));
+  const visibleTags = tags.filter(tag => tag.name.toLocaleLowerCase('de').includes(tagSearch.trim().toLocaleLowerCase('de')));
   const priority = [...form.tag_priority, ...tags.map(t=>t.id).filter(id=>!form.tag_priority.includes(id))];
   const selected = priority.filter(id=>form.selected_tags === null || form.selected_tags.includes(id));
   function move(id, direction) {
@@ -42,11 +44,20 @@ export function IndexOptions({form, change, metadata, connected, busy, ready, se
     <button type="button" className="btn btn-outline-secondary btn-sm mb-3" disabled={!connected || busy || !ready} onClick={()=>send('metadata.get')}>Tags und Ablagefelder laden</button>
     {form.groups.includes('tags') && <>
       <h3 className="h6">Gruppierungs-Tags</h3>
-      <label className="small d-block mb-2"><input type="checkbox" className="form-check-input me-2" checked={form.selected_tags === null} onChange={e=>change('selected_tags',e.target.checked ? null : tags.map(t=>t.id))}/>Alle Tags für die Gruppierung verwenden</label>
-      {form.selected_tags !== null && <div className="tag-selection mb-3">{tags.length ? tags.map(tag=><label className="small d-block py-1" key={tag.id}><input type="checkbox" className="form-check-input me-2" checked={form.selected_tags.includes(tag.id)} onChange={e=>change('selected_tags',e.target.checked ? [...form.selected_tags,tag.id] : form.selected_tags.filter(id=>id!==tag.id))}/>{tag.name}</label>) : <p className="field-hint">Zuerst Tags laden. Ohne Auswahl werden alle Dokumente unter „Ohne passenden Tag“ geführt.</p>}</div>}
+      <label className="small d-block mb-2"><input type="checkbox" className="form-check-input me-2" checked={form.selected_tags === null} onChange={e=>change('selected_tags',e.target.checked ? null : [])}/>Alle Tags für die Gruppierung verwenden</label>
+      {form.selected_tags !== null && <>
+        <label htmlFor="tag-search" className="form-label">Tags suchen</label>
+        <input id="tag-search" type="search" className="form-control mb-2" value={tagSearch} onChange={e=>setTagSearch(e.target.value)} placeholder="Tag-Name eingeben …"/>
+        <p className="field-hint mb-2" role="status">{form.selected_tags.length} Tags ausgewählt · {visibleTags.length} Treffer</p>
+        <div className="tag-selection mb-3">{visibleTags.map(tag=><label className="small d-block py-1" key={tag.id}><input type="checkbox" className="form-check-input me-2" checked={form.selected_tags.includes(tag.id)} onChange={e=>change('selected_tags',e.target.checked ? [...form.selected_tags,tag.id] : form.selected_tags.filter(id=>id!==tag.id))}/>{tag.name}</label>)}
+          {!tags.length && <p className="field-hint mb-0">Zuerst Tags laden.</p>}
+          {tags.length>0 && !visibleTags.length && <p className="field-hint mb-0">Keine Tags für diese Suche gefunden.</p>}
+        </div>
+      </>}
+      <label className="small d-block mb-3"><input type="checkbox" className="form-check-input me-2" checked={form.include_unmatched} onChange={e=>change('include_unmatched',e.target.checked)}/>Dokumente ohne passenden Tag anzeigen</label>
       <label htmlFor="tag-mode" className="form-label">Dokumente mit mehreren Tags</label><select id="tag-mode" className="form-select mb-2" value={form.tag_mode} onChange={e=>change('tag_mode',e.target.value)}><option value="multiple">Unter jedem passenden Tag aufführen</option><option value="priority">Einmal nach Tag-Priorität zuordnen</option></select>
       {form.tag_mode === 'priority' && <div className="mb-3"><p className="field-hint">Oberster passender Tag gewinnt. Nicht priorisierte Tags folgen alphabetisch.</p>{selected.map((id,i)=><div className="priority-row" key={id}><span>{i+1}. {tags.find(t=>t.id===id)?.name || `Tag #${id}`}</span><div><button type="button" className="btn btn-sm btn-outline-secondary" aria-label={`${tags.find(t=>t.id===id)?.name || id} nach oben`} disabled={i===0} onClick={()=>move(id,-1)}>↑</button><button type="button" className="btn btn-sm btn-outline-secondary ms-1" aria-label={`${tags.find(t=>t.id===id)?.name || id} nach unten`} disabled={i===selected.length-1} onClick={()=>move(id,1)}>↓</button></div></div>)}</div>}
-      <p className="field-hint">Die Tag-Auswahl filtert keine Dokumente. Alle ursprünglichen Tags bleiben als Suchhinweise sichtbar.</p>
+      <p className="field-hint">Nur Dokumente mit mindestens einem ausgewählten Tag werden aufgenommen. Die Option „ohne passenden Tag“ ergänzt die übrigen Dokumente. Die Suche verändert deine Auswahl nicht.</p>
     </>}
     <h3 className="h6 mt-3">Physischer Ablageort</h3><label className="form-label" htmlFor="location-field">Paperless-Feld für den Ablageort</label><select id="location-field" className="form-select mb-2" value={form.location_field || ''} onChange={e=>change('location_field',e.target.value ? Number(e.target.value) : null)}><option value="">Kein Feld / nur ASN-Zuordnung</option>{form.location_field && !(metadata?.custom_fields || []).some(f=>f.id===form.location_field) && <option value={form.location_field}>Feld #{form.location_field} · Metadaten laden</option>}{(metadata?.custom_fields || []).map(field=><option key={field.id} value={field.id}>{field.name}</option>)}</select>
     <p className="field-hint">Text- und Auswahlfelder werden unterstützt. Fehlt ein Wert, gilt die ASN-Zuordnung unten.</p>

@@ -22,7 +22,7 @@ DOCUMENTS = [
 
 
 def test_inclusive_range_and_nested_grouping():
-    index = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags', 'correspondent']))
+    index = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags', 'correspondent'], include_unmatched=True))
     assert index['count'] == 3
     assert [s['path'] for s in index['sections']] == [['Bank', 'Musterbank'], ['Ohne Tag', 'Ohne Korrespondent'], ['Versicherung', 'Musterbank']]
     assert [d['asn'] for d in index['sections'][0]['documents']] == [11, 10]
@@ -31,7 +31,7 @@ def test_inclusive_range_and_nested_grouping():
 
 @pytest.mark.parametrize('groups', [[], ['tags'], ['correspondent'], ['tags', 'correspondent'], ['correspondent', 'tags']])
 def test_all_grouping_modes(groups):
-    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=groups, sort='asn'))
+    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=groups, sort='asn', include_unmatched=True))
     assert result['count'] == 3
     assert all([d['asn'] for d in s['documents']] == sorted(d['asn'] for d in s['documents']) for s in result['sections'])
 
@@ -102,7 +102,7 @@ def test_websocket_generation_and_pdf(monkeypatch):
         assert client.get('/api/health').json()['status'] == 'ok'
         with client.websocket_connect('/ws', headers={'origin': 'http://testserver'}) as ws:
             assert ws.receive_json()['type'] == 'settings'
-            ws.send_json({'type': 'index.generate', 'id': 'one', 'data': {'start': 10, 'end': 12, 'groups': ['tags', 'correspondent']}})
+            ws.send_json({'type': 'index.generate', 'id': 'one', 'data': {'start': 10, 'end': 12, 'groups': ['tags', 'correspondent'], 'include_unmatched': True}})
             assert ws.receive_json()['type'] == 'progress'
             result = ws.receive_json()
             assert result['type'] == 'index' and result['data']['count'] == 3
@@ -123,27 +123,27 @@ def test_authentication_error():
         asyncio.run(run())
 
 
-def test_tag_selection_does_not_filter_documents():
-    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], selected_tags=[1]))
+def test_tag_selection_includes_unmatched_when_enabled():
+    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], include_unmatched=True, selected_tags=[1]))
     assert result['count'] == 3
     assert [s['path'] for s in result['sections']] == [['Ohne passenden Tag'], ['Versicherung']]
     assert result['sections'][1]['documents'][0]['tags'] == ['Bank', 'Versicherung']
-    none = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], selected_tags=[]))
+    none = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], include_unmatched=True, selected_tags=[]))
     assert len(none['sections']) == 1 and len(none['sections'][0]['documents']) == 3
 
 
 def test_priority_assigns_each_document_once():
-    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], tag_mode='priority', tag_priority=[1,2]))
+    result = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], include_unmatched=True, tag_mode='priority', tag_priority=[1,2]))
     assert sum(len(s['documents']) for s in result['sections']) == 3
     assert next(s for s in result['sections'] if s['path'] == ['Versicherung'])['documents'][0]['asn'] == 10
-    limited = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], tag_mode='priority', tag_priority=[1,2], selected_tags=[2]))
+    limited = build_index(DOCUMENTS, TAGS, CORRESPONDENTS, IndexRequest(start=10, end=12, groups=['tags'], include_unmatched=True, tag_mode='priority', tag_priority=[1,2], selected_tags=[2]))
     assert sorted(d['asn'] for s in limited['sections'] if s['path'] == ['Bank'] for d in s['documents']) == [10,11]
 
 
 def test_four_levels_year_order_and_latest_first():
     docs = [{**DOCUMENTS[0], 'created':'2024-01-01', 'document_type':1},
             {**DOCUMENTS[1], 'created':'2025-01-01', 'document_type':1}, DOCUMENTS[2]]
-    result = build_index(docs, TAGS, CORRESPONDENTS, IndexRequest(start=10,end=12,groups=['year','tags','correspondent','document_type'], year_desc=True), [{'id':1,'name':'Vertrag'}])
+    result = build_index(docs, TAGS, CORRESPONDENTS, IndexRequest(start=10,end=12,groups=['year','tags','correspondent','document_type'], include_unmatched=True, year_desc=True), [{'id':1,'name':'Vertrag'}])
     assert [s['path'][0] for s in result['sections']] == ['2025','2024','2024','Ohne Jahr']
     assert result['sections'][0]['path'] == ['2025','Bank','Musterbank','Vertrag']
     flat = build_index(docs, TAGS, CORRESPONDENTS, IndexRequest(start=10,end=12,sort='date_desc'))
@@ -166,7 +166,7 @@ def test_location_fields_select_labels_and_range_fallback():
 
 
 def test_compressed_gaps_and_unique_correspondent_register():
-    result = build_index(DOCUMENTS + [DOCUMENTS[0]],TAGS,CORRESPONDENTS,IndexRequest(start=0,end=2147483647,show_gaps=True,groups=['tags']))
+    result = build_index(DOCUMENTS + [DOCUMENTS[0]],TAGS,CORRESPONDENTS,IndexRequest(start=0,end=2147483647,show_gaps=True,groups=['tags'],include_unmatched=True))
     assert result['count'] == 4
     assert result['gaps'] == [{'start':0,'end':9},{'start':13,'end':98},{'start':100,'end':2147483647}]
     assert result['gap_count'] == 2147483648-4
@@ -178,7 +178,7 @@ def test_compressed_gaps_and_unique_correspondent_register():
 def test_pdf_navigation_pages_bookmarks_and_appendices():
     from io import BytesIO
     from pypdf import PdfReader
-    request = IndexRequest(start=9,end=13,groups=['tags','correspondent'],show_gaps=True,new_group_page=True,location_rules=[{'start':10,'end':12,'label':'Ordner 3 / Bank'}])
+    request = IndexRequest(start=9,end=13,groups=['tags','correspondent'],include_unmatched=True,show_gaps=True,new_group_page=True,location_rules=[{'start':10,'end':12,'label':'Ordner 3 / Bank'}])
     result = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,request)
     reader = PdfReader(BytesIO(render_pdf(result)))
     text = '\n'.join(page.extract_text() for page in reader.pages)
@@ -217,3 +217,34 @@ def test_metadata_websocket_and_extended_generation(monkeypatch):
             assert result['sections'][0]['path']==['2026','Rechnung']
             assert result['sections'][0]['documents'][0]['location']=='Ordner A'
             assert result['gaps']==[{'start':11,'end':12}]
+
+
+def test_tag_filter_affects_index_register_and_pdf_but_not_api_gaps():
+    from io import BytesIO
+    from pypdf import PdfReader
+    result = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,IndexRequest(start=10,end=12,groups=['tags'],selected_tags=[1],show_gaps=True))
+    assert result['count'] == 1
+    assert [s['path'] for s in result['sections']] == [['Versicherung']]
+    assert result['register'] == [{'name':'Musterbank','asns':[10]}]
+    assert result['gaps'] == [] and result['gap_count'] == 0
+    text = '\n'.join(p.extract_text() for p in PdfReader(BytesIO(render_pdf(result))).pages)
+    assert 'Zahlung' in text
+    assert 'Änderung <2026> & Vertrag' not in text
+    assert 'Ohne Gruppe' not in text
+    assert 'Ohne passenden Tag' not in text
+
+
+def test_empty_tag_selection_and_unmatched_option():
+    empty = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,IndexRequest(start=10,end=12,groups=['tags'],selected_tags=[]))
+    assert empty['count'] == 0 and empty['sections'] == [] and empty['register'] == []
+    included = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,IndexRequest(start=10,end=12,groups=['tags'],selected_tags=[],include_unmatched=True))
+    assert included['count'] == 3
+    assert [s['path'] for s in included['sections']] == [['Ohne passenden Tag']]
+    flat = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,IndexRequest(start=10,end=12,groups=[],selected_tags=[]))
+    assert flat['count'] == 3
+
+
+def test_all_tags_exclude_untagged_by_default():
+    result = build_index(DOCUMENTS,TAGS,CORRESPONDENTS,IndexRequest(start=10,end=12,groups=['tags']))
+    assert result['count'] == 2
+    assert all(d['asn'] != 12 for section in result['sections'] for d in section['documents'])

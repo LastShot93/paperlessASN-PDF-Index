@@ -29,6 +29,7 @@ class IndexRequest(BaseModel):
     sort: Literal['title', 'asn', 'date', 'date_desc'] = 'title'
     title: str = Field(default='Archivverzeichnis', min_length=1, max_length=150)
     selected_tags: list[int] | None = Field(default=None, max_length=1000)
+    include_unmatched: bool = False
     tag_mode: Literal['multiple', 'priority'] = 'multiple'
     tag_priority: list[int] = Field(default_factory=list, max_length=1000)
     year_desc: bool = False
@@ -81,14 +82,17 @@ def build_index(documents, tags, correspondents, request, document_types=None, c
     field = next((f for f in custom_fields or [] if f['id'] == request.location_field), None)
     selection = set(request.selected_tags) if request.selected_tags is not None else None
     priority = {tag: i for i, tag in enumerate(request.tag_priority)}
-    docs, seen = [], set()
+    docs, seen, present_asns = [], set(), set()
     for doc in documents:
         asn = doc.get('archive_serial_number')
         if asn is None or not request.start <= asn <= request.end or doc['id'] in seen:
             continue
         seen.add(doc['id'])
+        present_asns.add(asn)
         all_tags = list(dict.fromkeys(doc.get('tags', [])))
         group_tags = [t for t in all_tags if selection is None or t in selection]
+        if 'tags' in request.groups and not group_tags and not request.include_unmatched:
+            continue
         group_tags.sort(key=lambda t: (priority.get(t, len(priority)), alphabetical(tag_names.get(t, f'Tag #{t}')), t))
         if request.tag_mode == 'priority':
             group_tags = group_tags[:1]
@@ -134,7 +138,7 @@ def build_index(documents, tags, correspondents, request, document_types=None, c
     register = defaultdict(set)
     for doc in docs:
         register[doc['correspondent']].add(doc['asn'])
-    gaps = missing_ranges(request.start, request.end, [d['asn'] for d in docs]) if request.show_gaps else []
+    gaps = missing_ranges(request.start, request.end, present_asns) if request.show_gaps else []
     return {'title': request.title, 'start': request.start, 'end': request.end,
             'count': len(docs), 'sections': group(docs) if docs else [],
             'generated_at': datetime.now().astimezone().isoformat(),
