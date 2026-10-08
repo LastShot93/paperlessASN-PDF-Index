@@ -140,6 +140,15 @@ async def websocket(ws: WebSocket):
                     async with client:
                         await fetch_all(client, base + '/documents/', {'page_size': 1, 'id': 0})
                     await send('connection', {'ok': True, 'message': 'Verbindung zu Paperless erfolgreich.'}, request_id)
+                elif action == 'metadata.get':
+                    base, client = api_client()
+                    async with client:
+                        tags, types, fields = await asyncio.gather(
+                            fetch_all(client, base + '/tags/'),
+                            fetch_all(client, base + '/document_types/'),
+                            fetch_all(client, base + '/custom_fields/'))
+                    await send('metadata', {'tags': tags, 'document_types': types,
+                                            'custom_fields': [f for f in fields if f.get('data_type') in ('string', 'select', 'longtext')]}, request_id)
                 elif action == 'index.generate':
                     cached = None
                     request = IndexRequest.model_validate(message.get('data', {}))
@@ -147,16 +156,18 @@ async def websocket(ws: WebSocket):
                     async def progress(loaded, total):
                         await send('progress', {'loaded': loaded, 'total': total}, request_id)
                     async with client:
-                        documents, tags, correspondents = await asyncio.gather(
+                        documents, tags, correspondents, types, fields = await asyncio.gather(
                             fetch_all(client, base + '/documents/', {
                                 'archive_serial_number__gte': request.start,
                                 'archive_serial_number__lte': request.end,
                                 'ordering': 'archive_serial_number',
-                                'fields': 'id,title,archive_serial_number,created,tags,correspondent',
+                                'fields': 'id,title,archive_serial_number,created,tags,correspondent,document_type,custom_fields',
                             }, progress),
                             fetch_all(client, base + '/tags/'),
-                            fetch_all(client, base + '/correspondents/'))
-                    cached = build_index(documents, tags, correspondents, request)
+                            fetch_all(client, base + '/correspondents/'),
+                            fetch_all(client, base + '/document_types/'),
+                            fetch_all(client, base + '/custom_fields/') if request.location_field else asyncio.sleep(0, result=[]))
+                    cached = build_index(documents, tags, correspondents, request, types, fields)
                     await send('index', cached, request_id)
                 elif action == 'index.pdf':
                     if cached is None:
