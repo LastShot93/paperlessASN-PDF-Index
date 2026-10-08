@@ -1,0 +1,6 @@
+{
+  "name": "paperless-asn-index", "private": true, "version": "1.0.0", "type": "module",
+  "scripts": {"dev": "vite --host 0.0.0.0", "build": "vite build"},
+  "dependencies": {"bootstrap": "5.3.8", "react": "^19.2.0", "react-dom": "^19.2.0"},
+  "devDependencies": {"vite": "^7.1.0"}
+}

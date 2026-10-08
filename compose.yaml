@@ -1,0 +1,40 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8000"
+    environment:
+      PAPERLESS_URL: ${PAPERLESS_URL:-}
+      PAPERLESS_API_TOKEN: ${PAPERLESS_API_TOKEN:-}
+      MAX_DOCUMENTS: ${MAX_DOCUMENTS:-50000}
+      TZ: Europe/Berlin
+    volumes:
+      - app_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  https:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
